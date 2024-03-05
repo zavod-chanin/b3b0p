@@ -6,7 +6,7 @@ ACCOUNT_FROM_MNEMONIC = False
 USE_PROXY = True
 
 # Задержка между действия (от, до) сек.
-DELAY = (1, 1)
+DELAY = (30, 90)
 
 # Задержка перед стартом работы кошельков (от, до) сек.
 START_DELAY = (1, 1)

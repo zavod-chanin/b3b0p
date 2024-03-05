@@ -26,15 +26,16 @@ def worker(mnemonic: str, global_lock: threading.RLock, proxy: str = None):
             client.logger.info("Подключился к кошельку, начинаю работу")
 
         wmatic = WMATIC(client)
-        # wmatic.wrap(
-        #     int(
-        #         client.w3.eth.get_balance(client.wallet_address)
-        #         * random.uniform(*MATIC_PERC_FOR_USE)
-        #     )
-        # )
+        wmatic.wrap(
+            int(
+                client.w3.eth.get_balance(client.wallet_address)
+                * random.uniform(*MATIC_PERC_FOR_USE)
+            )
+        )
         client.random_delay()
         bebop = Bebop(client)
         bebop.db.create_table_if_not_exists()
+        bebop.get_usd_prices()
 
         start_sell_token = random.sample(list(bebop.swap_available_tokens), 1)
 

@@ -1,6 +1,7 @@
 import logging
 from threading import RLock
 from eth_typing import ChecksumAddress
+from datetime import datetime
 
 
 class LockedLogger:
@@ -15,9 +16,10 @@ class LockedLogger:
             datefmt="%Y-%m-%d %H:%M:%S",
         )
 
-        file_handler = logging.FileHandler(
-            f"log/{self.wallet_address}.log", encoding="utf-8"
-        )
+        current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_filename = f"log/{self.wallet_address}_{current_datetime}.log"
+
+        file_handler = logging.FileHandler(log_filename, encoding="utf-8")
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
 

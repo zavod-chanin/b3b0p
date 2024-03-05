@@ -119,10 +119,10 @@ class Bebop(Web3Protocol):
                 f"Прозошла ошибка во время получения сигнатуры аппрува для бебопа: {e}"
             )
 
-            self.random_repeat_sleep()
+            self.random_retry_sleep()
             return self.get_approval_signature(sell_tokens_list)
 
-    def approve_tokens(self, sell_tokens_list: list[str], is_repeat: bool = False):
+    def approve_tokens(self, sell_tokens_list: list[str], is_retry: bool = False):
         try:
             tokens_for_order_approve = []
             for i in sell_tokens_list:
@@ -132,7 +132,7 @@ class Bebop(Web3Protocol):
                     is_approved = token.approve_for(
                         "0x000000000022D473030F116dDEE9F6B43aC78BA3"
                     )
-                    if is_repeat:
+                    if is_retry:
                         if (
                             is_approved
                             and is_approved != "allready_approved"
@@ -157,7 +157,7 @@ class Bebop(Web3Protocol):
 
         except Exception as e:
             self.client.logger.error(f"Произошла ошибка во время аппрува токенов {e}")
-            self.random_repeat_sleep()
+            self.random_retry_sleep()
             return self.approve_tokens(sell_tokens_list, repeat=True)
 
     def get_quote_for_swap(
@@ -317,86 +317,70 @@ class Bebop(Web3Protocol):
 
             return tx_status
 
-    @retry(max_execution_time=12)
+    @retry(max_execution_time=1800, sleep_time=20)
     def swap(
         self,
         sell_tokens_list: list[str],
         buy_tokens_list: list[str] = None,
         amount_list: list[int] = None,
-        is_repeat: bool = False,
-    ) -> None:
-        try:
-            tokens_for_order_approve, approval_signature, exp_time = (
-                self.approve_tokens(sell_tokens_list, is_repeat)
-            )
+        is_retry: bool = False,
+    ) -> list[str]:
 
-            if not amount_list:
-                amount_list = []
+        tokens_for_order_approve, approval_signature, exp_time = self.approve_tokens(
+            sell_tokens_list, is_retry
+        )
 
-                for i in sell_tokens_list:
+        if not amount_list:
+            amount_list = []
+
+            for i in sell_tokens_list:
+                token = Erc20Token(self.client, i)
+
+                token_balance = token.get_balance()
+
+                while not token_balance:
+                    self.client.logger.debug(f"Баланс токена {i} = 0. Пробую еще раз")
                     token = Erc20Token(self.client, i)
-
                     token_balance = token.get_balance()
+                    time.sleep(10)
 
-                    while not token_balance:
-                        self.client.logger.debug(
-                            f"Баланс токена {i} = 0. Пробую еще раз"
-                        )
-                        token = Erc20Token(self.client, i)
-                        token_balance = token.get_balance()
-                        time.sleep(5)
+                amount_list.append(token_balance)
 
-                    amount_list.append(token.get_balance())
+        self.client.logger.info(
+            f"Начал свап {sell_tokens_list} : {amount_list} на {buy_tokens_list}"
+        )
 
-            self.client.logger.info(
-                f"Начал свап {sell_tokens_list} : {amount_list} на {buy_tokens_list}"
+        if isinstance(buy_tokens_list, int):
+            buy_tokens_list = random.sample(
+                list(self.swap_available_tokens - set(sell_tokens_list)),
+                buy_tokens_list,
             )
 
-            # if buy_tokens_list is None:
+        order_signature, quote = self.get_order_signature(
+            amount_list, sell_tokens_list, buy_tokens_list
+        )
+        is_sended = self.procces_order(
+            order_signature,
+            quote,
+            approval_signature,
+            exp_time,
+            tokens_for_order_approve,
+        )
+        if is_sended:
+            self.client.logger.info(f"Успешно свапнул. Транзакция подтвердилась")
+            self.order_approved_tokens.update(sell_tokens_list)
 
-            order_signature, quote = self.get_order_signature(
-                amount_list, sell_tokens_list, buy_tokens_list
-            )
-            is_sended = self.procces_order(
-                order_signature,
-                quote,
-                approval_signature,
-                exp_time,
-                tokens_for_order_approve,
-            )
-            if is_sended:
-                self.client.logger.info(f"Успешно свапнул. Транзакция подтвердилась")
-                self.order_approved_tokens.update(sell_tokens_list)
-        except Exception as e:
-            self.client.logger.error(
-                f"Произошла ошибка во время свапа: {e}. Пробую еще раз"
-            )
-            self.random_repeat_sleep()
-
-            if amount_list is not None:
-                return self.swap(
-                    sell_tokens_list, buy_tokens_list, amount_list, is_repeat=True
-                )
-            else:
-                return self.swap(sell_tokens_list, buy_tokens_list, is_repeat=True)
+            return buy_tokens_list
 
     def run_work(self, start_token: list[str]):
 
-        start_buy_tokens = random.sample(
-            list(self.swap_available_tokens - set(start_token)), 2
-        )
-
-        self.swap(start_token, start_buy_tokens)
+        start_buy_tokens = self.swap(start_token, 2)
 
         self.db_stats["new_multi_swap_tx_count"] += 1
 
         self.client.random_delay()
 
         random.shuffle(start_buy_tokens)
-
-        single_swap_buy_token = random.sample(
-            list(self.swap_available_tokens - set(start_token + start_buy_tokens)), 1
-        )
 
         prev_usd_balance = 0
 
@@ -406,7 +390,7 @@ class Bebop(Web3Protocol):
                 single_swap_sell_token = i
                 prev_usd_balance = usd_balance
 
-        self.swap([single_swap_sell_token], single_swap_buy_token)
+        single_swap_buy_token = self.swap([single_swap_sell_token], 1)
 
         self.db_stats["new_single_swap_tx_count"] += 1
 
@@ -418,42 +402,35 @@ class Bebop(Web3Protocol):
 
         random.shuffle(multi_swap_sell_tokens)
 
-        multi_swap_buy_token = random.sample(
-            list(self.swap_available_tokens - set(multi_swap_sell_tokens)), 1
-        )
-
-        self.swap(multi_swap_sell_tokens, multi_swap_buy_token)
+        multi_swap_buy_token = self.swap(multi_swap_sell_tokens, 1)
 
         self.db_stats["new_multi_swap_tx_count"] += 1
 
         self.client.random_delay()
 
-        end_token = random.sample(
-            list(self.swap_available_tokens - set(multi_swap_buy_token)), 1
-        )
-
-        self.swap(multi_swap_buy_token, end_token)
+        end_token = self.swap(multi_swap_buy_token, 1)
 
         self.db_stats["new_single_swap_tx_count"] += 1
 
         return end_token
 
+    @retry(max_retries=10, sleep_time=10)
+    def get_usd_prices(self):
+        url = "https://api.bebop.xyz/tokens/v1/polygon/prices"
+
+        response = requests.get(
+            url=url, headers=self.main_headers, proxies=self.client.proxies
+        )
+
+        if response.status_code == 200:
+
+            self.usd_prices = response.json()
+
     def get_token_usd_balance(self, contract_address: str) -> float:
-        try:
+        usd_price = self.usd_prices[contract_address]
 
-            url = "https://api.bebop.xyz/tokens/v1/polygon/prices"
+        token = Erc20Token(self.client, contract_address)
 
-            prices = requests.get(
-                url=url, headers=self.main_headers, proxies=self.client.proxies
-            ).json()
+        balance = token.convert_to_ether(token.get_balance())
 
-            usd_price = prices[contract_address]
-
-            token = Erc20Token(self.client, contract_address)
-
-            balance = token.convert_to_ether(token.get_balance())
-
-            return usd_price * balance
-        except Exception:
-            self.random_repeat_sleep()
-            return self.get_token_usd_balance(contract_address)
+        return usd_price * balance

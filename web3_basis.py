@@ -9,9 +9,7 @@ from web3 import Web3
 from web3.middleware import geth_poa_middleware
 from web3.types import TxParams
 from web3.contract.contract import ContractFunction
-from web3.exceptions import TimeExhausted
 from eth_account.messages import encode_defunct
-from functools import wraps
 
 
 from settings import *
@@ -218,7 +216,7 @@ class Web3Protocol:
         """
         self.db_stats = {"new_tx_count": 0}
 
-    def random_repeat_sleep(self, sleep_time: int = 10):
+    def random_retry_sleep(self, sleep_time: int = 10):
         time.sleep(
             random.randint(
                 int(sleep_time - sleep_time / 3), int(sleep_time + sleep_time / 3)
@@ -226,37 +224,50 @@ class Web3Protocol:
         )
 
 
-def retry(max_retries: int = 3, sleep_time: int = 5, max_execution_time: int = None):
+def retry(
+    max_retries: int = None,
+    sleep_time: int = 5,
+    max_execution_time: int = None,
+):
     def decorator(func):
-        def wrapper(self: Web3Protocol, *args, **kwargs):
+        def wrapper(web3_protocol: Web3Protocol, *args, **kwargs):
             attempts = 0
             start_time = time.time()
 
-            while attempts < max_retries:
+            while True:
                 try:
-                    result = func(*args, **kwargs)
+                    if not attempts:
+
+                        result = func(web3_protocol, *args, **kwargs)
+
+                    else:
+                        result = func(web3_protocol, *args, is_retry=True, **kwargs)
+
                     return result
                 except Exception as e:
-                    self.client.logger.error(
+                    web3_protocol.client.logger.error(
                         f"Произошла ошибка во время выполнения функции {func.__qualname__}: {e.__class__.__name__}: {e}"
                     )
                     attempts += 1
-                    self.client.logger.info(f"Пробую еще раз через несколько секунд...")
-                    self.random_repeat_sleep(sleep_time)
-
-                elapsed_time = time.time() - start_time
-
-                if (
-                    max_execution_time is not None
-                    and elapsed_time >= max_execution_time
-                ):
-                    raise Web3Protocol.MaxRetriesExceededError(
-                        f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
+                    web3_protocol.client.logger.info(
+                        f"Пробую еще раз через несколько секунд..."
                     )
+                    time.sleep(sleep_time)
 
-            raise Web3Protocol.MaxRetriesExceededError(
-                f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
-            )
+                    elapsed_time = time.time() - start_time
+
+                    if (
+                        max_execution_time is not None
+                        and elapsed_time >= max_execution_time
+                    ):
+                        raise Web3Protocol.MaxRetriesExceededError(
+                            f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
+                        )
+
+                    if max_retries is not None and attempts >= max_retries:
+                        raise Web3Protocol.MaxRetriesExceededError(
+                            f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
+                        )
 
         return wrapper
 
