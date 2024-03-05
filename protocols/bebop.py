@@ -317,7 +317,7 @@ class Bebop(Web3Protocol):
 
             return tx_status
 
-    @retry
+    @retry(max_execution_time=12)
     def swap(
         self,
         sell_tokens_list: list[str],

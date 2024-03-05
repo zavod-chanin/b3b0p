@@ -226,35 +226,38 @@ class Web3Protocol:
         )
 
 
-def retry(
-    func, max_retries: int = 3, sleep_time: int = 5, max_execution_time: int = None
-):
-    @wraps(func)
-    def wrapper(self: Web3Protocol, *args, **kwargs):
-        attempts = 0
-        start_time = time.time()
+def retry(max_retries: int = 3, sleep_time: int = 5, max_execution_time: int = None):
+    def decorator(func):
+        def wrapper(self: Web3Protocol, *args, **kwargs):
+            attempts = 0
+            start_time = time.time()
 
-        while attempts < max_retries:
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
-                self.client.logger.error(
-                    f"Произошла ошибка во время выполнения функции {func.__qualname__}: {e.__class__.__name__}: {e}"
-                )
-                attempts += 1
-                self.client.logger.info(f"Пробую еще раз через несколько секунд...")
-                self.random_repeat_sleep(sleep_time)
+            while attempts < max_retries:
+                try:
+                    result = func(*args, **kwargs)
+                    return result
+                except Exception as e:
+                    self.client.logger.error(
+                        f"Произошла ошибка во время выполнения функции {func.__qualname__}: {e.__class__.__name__}: {e}"
+                    )
+                    attempts += 1
+                    self.client.logger.info(f"Пробую еще раз через несколько секунд...")
+                    self.random_repeat_sleep(sleep_time)
 
-            elapsed_time = time.time() - start_time
+                elapsed_time = time.time() - start_time
 
-            if max_execution_time is not None and elapsed_time >= max_execution_time:
-                raise Web3Protocol.MaxRetriesExceededError(
-                    f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
-                )
+                if (
+                    max_execution_time is not None
+                    and elapsed_time >= max_execution_time
+                ):
+                    raise Web3Protocol.MaxRetriesExceededError(
+                        f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
+                    )
 
-        raise Web3Protocol.MaxRetriesExceededError(
-            f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
-        )
+            raise Web3Protocol.MaxRetriesExceededError(
+                f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
+            )
 
-    return wrapper
+        return wrapper
+
+    return decorator
