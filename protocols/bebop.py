@@ -323,6 +323,7 @@ class Bebop(Web3Protocol):
         sell_tokens_list: list[str],
         buy_tokens_list: list[str] = None,
         amount_list: list[int] = None,
+        keep_amount_range: tuple[float, float] = None,
         is_retry: bool = False,
     ) -> list[str]:
 
@@ -344,7 +345,17 @@ class Bebop(Web3Protocol):
                     token_balance = token.get_balance()
                     time.sleep(10)
 
-                amount_list.append(token_balance)
+                if keep_amount_range:
+                    keep_amount_wei = token.convert_to_wei(
+                        float(round(random.uniform(*keep_amount_range), 4))
+                    )
+
+                    sell_amount = token_balance - keep_amount_wei
+
+                else:
+                    sell_amount = token_balance
+
+                amount_list.append(sell_amount)
 
         self.client.logger.info(
             f"Начал свап {sell_tokens_list} : {amount_list} на {buy_tokens_list}"

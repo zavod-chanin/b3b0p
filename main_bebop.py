@@ -57,36 +57,33 @@ def worker(mnemonic: str, global_lock: threading.RLock, proxy: str = None):
 
         client.logger.info("Успешно сделал круги")
 
-        if start_sell_token[0] != "0xc2132D05D31c914a87C6611C10748AEb04B58e8F":
-
-            client.logger.info("Начал обмен последнего токена на USDT")
-
-            bebop.swap(start_sell_token, ["0xc2132D05D31c914a87C6611C10748AEb04B58e8F"])
-
-            bebop.db_stats["new_single_swap_tx_count"] += 1
-
-            client.random_delay()
-
-        usdt = Erc20Token(client, "0xc2132D05D31c914a87C6611C10748AEb04B58e8F")
-
         if KEEP_USDT:
-            usdt_keep_value = random.uniform(*KEEP_USDT)
-            usdt_swap_value = int(
-                usdt.get_balance() - usdt.convert_to_wei(usdt_keep_value)
+
+            if start_sell_token[0] != "0xc2132D05D31c914a87C6611C10748AEb04B58e8F":
+
+                client.logger.info("Начал обмен последнего токена на USDT")
+
+                bebop.swap(
+                    start_sell_token, ["0xc2132D05D31c914a87C6611C10748AEb04B58e8F"]
+                )
+
+                bebop.db_stats["new_single_swap_tx_count"] += 1
+
+                client.random_delay()
+
+            usdt = Erc20Token(client, "0xc2132D05D31c914a87C6611C10748AEb04B58e8F")
+
+            bebop.swap(
+                ["0xc2132D05D31c914a87C6611C10748AEb04B58e8F"],
+                ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"],
+                keep_amount_range=KEEP_USDT,
             )
-            client.logger.info(
-                f"Начал обмен USDT на MATIC. Оставлю {usdt_keep_value} USDT на балансе"
-            )
+
         else:
-            usdt_swap_value = usdt.get_balance()
-            client.logger.info(f"Начал обмен USDT на MATIC. Оставлю 0 USDT на балансе")
-
-        bebop.swap(
-            ["0xc2132D05D31c914a87C6611C10748AEb04B58e8F"],
-            ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"],
-            [usdt_swap_value],
-        )
-
+            bebop.swap(
+                [start_sell_token],
+                ["0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"],
+            )
         bebop.db_stats["new_single_swap_tx_count"] += 1
 
         client.random_delay()
@@ -131,6 +128,9 @@ def worker(mnemonic: str, global_lock: threading.RLock, proxy: str = None):
                 client.logger.info("Успешно вывел MATIC")
 
         client.logger.info("Успешно закончил работу без ошибок")
+
+        with open("ready_wallets.txt", "a") as file:
+            file.write(f"{mnemonic}\n")
 
     except Exception as e:
         client.logger.error(e)
@@ -184,6 +184,8 @@ def main() -> None:
     with open("mnemonic.txt", "r") as mnemonic_file:
         mnemonic_phrases = [line.strip() for line in mnemonic_file.readlines()]
     random.shuffle(mnemonic_phrases)
+
+    open("ready_wallets.txt", "w").close()
 
     global_lock = threading.RLock()
 
