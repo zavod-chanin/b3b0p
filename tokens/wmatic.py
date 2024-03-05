@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Union
 from tokens.erc20token import Erc20Token
 from web3_basis import Web3Client
@@ -29,3 +30,5 @@ class WMATIC(Erc20Token):
             self.client.logger.error(
                 f"Произошла ошибка во время врапа {self.token_name}: {e}"
             )
+            time.sleep(5)
+            return self.wrap(value)

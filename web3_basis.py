@@ -24,7 +24,13 @@ class Web3Client:
         "zksync": True,
     }
 
-    def __init__(self, mnemonic: str, global_lock: RLock, proxies: str = None) -> None:
+    def __init__(
+        self,
+        mnemonic: str,
+        global_lock: RLock,
+        max_gas_price: dict[int] = None,
+        proxies: str = None,
+    ) -> None:
         self.rpc = "https://polygon.llamarpc.com"
         self.chain_name = "polygon"
         self.is_chain_use_eip1559 = Web3Client.is_chain_use_eip1559[self.chain_name]
@@ -51,6 +57,8 @@ class Web3Client:
         self.wallet_address = self.w3.to_checksum_address(self.account.address)
         self.global_lock = global_lock
         self.logger = LockedLogger(self.wallet_address, self.global_lock)
+        if max_gas_price:
+            self.max_gas_price = max_gas_price[self.chain_name]
 
     def random_delay(self) -> None:
         sec = random.randint(*DELAY)
@@ -180,17 +188,6 @@ class Web3Client:
         except Exception as e:
             self.logger.error(f"Произошла ошибка во время проверки газа: {e}")
 
-    def wait_for_low_gas_price(self) -> None:
-        with self.global_lock:
-            gas_price = self.get_eth_mainnet_gas_price()
-            while gas_price > MAX_MAINNET_GAS_PRICE:
-                self.logger.debug(
-                    f"Цена газа слишком высокая {round(gas_price, 2)} GWei, жду {MAX_MAINNET_GAS_PRICE} GWei"
-                )
-                event = threading.Event()
-                event.wait(timeout=120)
-                gas_price = self.get_eth_mainnet_gas_price()
-
     def sign_signature(self, message: str):
         return self.w3.eth.account.sign_message(
             encode_defunct(text=message), self.private_key
@@ -223,52 +220,71 @@ class Web3Protocol:
             )
         )
 
+    @staticmethod
+    def retry(
+        max_retries: int = None,
+        sleep_time: int = 5,
+        max_execution_time: int = None,
+    ):
+        def decorator(func):
+            def wrapper(web3_protocol: Web3Protocol, *args, **kwargs):
+                attempts = 0
+                start_time = time.time()
 
-def retry(
-    max_retries: int = None,
-    sleep_time: int = 5,
-    max_execution_time: int = None,
-):
-    def decorator(func):
-        def wrapper(web3_protocol: Web3Protocol, *args, **kwargs):
-            attempts = 0
-            start_time = time.time()
+                while True:
+                    try:
+                        if not attempts:
+                            result = func(web3_protocol, *args, **kwargs)
 
-            while True:
-                try:
-                    if not attempts:
+                        else:
+                            result = func(web3_protocol, *args, is_retry=True, **kwargs)
 
-                        result = func(web3_protocol, *args, **kwargs)
-
-                    else:
-                        result = func(web3_protocol, *args, is_retry=True, **kwargs)
-
-                    return result
-                except Exception as e:
-                    web3_protocol.client.logger.error(
-                        f"Произошла ошибка во время выполнения функции {func.__qualname__}: {e.__class__.__name__}: {e}"
-                    )
-                    attempts += 1
-                    web3_protocol.client.logger.info(
-                        f"Пробую еще раз через несколько секунд..."
-                    )
-                    time.sleep(sleep_time)
-
-                    elapsed_time = time.time() - start_time
-
-                    if (
-                        max_execution_time is not None
-                        and elapsed_time >= max_execution_time
-                    ):
-                        raise Web3Protocol.MaxRetriesExceededError(
-                            f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
+                        return result
+                    except Exception as e:
+                        web3_protocol.client.logger.error(
+                            f"Произошла ошибка во время выполнения функции {func.__qualname__}: {e.__class__.__name__}: {e}"
                         )
-
-                    if max_retries is not None and attempts >= max_retries:
-                        raise Web3Protocol.MaxRetriesExceededError(
-                            f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
+                        attempts += 1
+                        web3_protocol.client.logger.info(
+                            f"Пробую еще раз через несколько секунд..."
                         )
+                        time.sleep(sleep_time)
 
-        return wrapper
+                        elapsed_time = time.time() - start_time
 
-    return decorator
+                        if (
+                            max_execution_time is not None
+                            and elapsed_time >= max_execution_time
+                        ):
+                            raise Web3Protocol.MaxRetriesExceededError(
+                                f"Превышено максимальное время выполнения ({max_execution_time} секунд). Функцию не удалось выполнить."
+                            )
+
+                        if max_retries is not None and attempts >= max_retries:
+                            raise Web3Protocol.MaxRetriesExceededError(
+                                f"Достигнуто максимальное количество повторений ({max_retries}). Функцию не удалось выполнить."
+                            )
+
+            return wrapper
+
+        return decorator
+
+    @staticmethod
+    def wait_for_low_gas():
+        def decorator(func):
+            def wrapper(web3_protocol: Web3Protocol, *args, **kwargs):
+                with web3_protocol.client.global_lock:
+                    gas_price = web3_protocol.client.w3.from_wei(
+                        web3_protocol.client.w3.eth.gas_price, "gwei"
+                    )
+                    while gas_price > web3_protocol.client.max_gas_price:
+                        web3_protocol.client.logger.info(
+                            f"Цена газа слишком высокая {round(gas_price, 2)} GWei, жду {web3_protocol.client.max_gas_price} GWei"
+                        )
+                        event = threading.Event()
+                        event.wait(timeout=120)
+                    return func(web3_protocol, *args, **kwargs)
+
+            return wrapper
+
+        return decorator

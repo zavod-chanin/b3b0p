@@ -12,13 +12,14 @@ from web3_basis import Web3Client, Web3Protocol
 from settings import *
 
 
-def worker(mnemonic: str, global_lock: threading.RLock, proxy: str = None):
+def worker(
+    mnemonic: str,
+    global_lock: threading.RLock,
+    max_gas_price: dict = None,
+    proxy: str = None,
+):
     try:
-        with global_lock:
-            if proxy:
-                client = Web3Client(mnemonic, global_lock, proxy)
-            else:
-                client = Web3Client(mnemonic, global_lock)
+        client = Web3Client(mnemonic, global_lock, max_gas_price, proxy)
 
         client.random_start_delay()
 
@@ -37,21 +38,14 @@ def worker(mnemonic: str, global_lock: threading.RLock, proxy: str = None):
         bebop.db.create_table_if_not_exists()
         bebop.get_usd_prices()
 
-        start_sell_token = random.sample(list(bebop.swap_available_tokens), 1)
-
         client.logger.info("Обмениваю WMATIC на токен")
-        bebop.swap(
-            [wmatic.contract.address],
-            start_sell_token,
-        )
+        start_sell_token = bebop.swap([wmatic.contract.address], 1)
 
         client.random_delay()
-        ACTUAL_REPEAT_WORK_COUNT = random.randint(*REPEAT_WORK_COUNT)
-        client.logger.info(
-            f"Начал круги свапов. Количество: {ACTUAL_REPEAT_WORK_COUNT}"
-        )
+        REPEAT_WORK_COUNT = random.randint(*REPEAT_WORK_COUNT_RANGE)
+        client.logger.info(f"Начал круги свапов. Количество: {REPEAT_WORK_COUNT}")
 
-        for _ in range(ACTUAL_REPEAT_WORK_COUNT):
+        for _ in range(REPEAT_WORK_COUNT):
             start_sell_token = bebop.run_work(start_sell_token)
             client.random_delay()
 
@@ -196,11 +190,13 @@ def main() -> None:
 
         with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
             for i, mnemonic in enumerate(mnemonic_phrases):
-                executor.submit(worker, mnemonic, global_lock, proxies[i])
+                executor.submit(
+                    worker, mnemonic, global_lock, MAX_GAS_PRICE, proxies[i]
+                )
     else:
         with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
             for mnemonic in mnemonic_phrases:
-                executor.submit(worker, mnemonic, global_lock)
+                executor.submit(worker, mnemonic, global_lock, MAX_GAS_PRICE)
 
 
 if __name__ == "__main__":

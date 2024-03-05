@@ -9,7 +9,7 @@ from eth_account.messages import encode_typed_data
 
 from database import DataBase
 from tokens.erc20token import Erc20Token
-from web3_basis import Web3Client, Web3Protocol, retry
+from web3_basis import Web3Client, Web3Protocol
 
 
 class Bebop(Web3Protocol):
@@ -317,7 +317,7 @@ class Bebop(Web3Protocol):
 
             return tx_status
 
-    @retry(max_execution_time=1800, sleep_time=20)
+    @Web3Protocol.retry(max_execution_time=1800, sleep_time=20)
     def swap(
         self,
         sell_tokens_list: list[str],
@@ -326,6 +326,10 @@ class Bebop(Web3Protocol):
         keep_amount_range: tuple[float, float] = None,
         is_retry: bool = False,
     ) -> list[str]:
+        """
+        Returns:
+            list[str]: Список с купленными токенами, после свапа
+        """
 
         tokens_for_order_approve, approval_signature, exp_time = self.approve_tokens(
             sell_tokens_list, is_retry
@@ -367,6 +371,16 @@ class Bebop(Web3Protocol):
                 buy_tokens_list,
             )
 
+        if buy_tokens_list and is_retry:
+            buy_tokens_list = random.sample(
+                list(
+                    self.swap_available_tokens
+                    - set(sell_tokens_list)
+                    - set(buy_tokens_list)
+                ),
+                len(buy_tokens_list),
+            )
+
         order_signature, quote = self.get_order_signature(
             amount_list, sell_tokens_list, buy_tokens_list
         )
@@ -383,6 +397,7 @@ class Bebop(Web3Protocol):
 
             return buy_tokens_list
 
+    @Web3Protocol.wait_for_low_gas()
     def run_work(self, start_token: list[str]):
 
         start_buy_tokens = self.swap(start_token, 2)
@@ -425,7 +440,7 @@ class Bebop(Web3Protocol):
 
         return end_token
 
-    @retry(max_retries=10, sleep_time=10)
+    @Web3Protocol.retry(max_retries=10, sleep_time=10)
     def get_usd_prices(self):
         url = "https://api.bebop.xyz/tokens/v1/polygon/prices"
 
